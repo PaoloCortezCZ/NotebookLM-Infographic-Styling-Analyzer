@@ -1,0 +1,5 @@
+{
+  "name": "Visual Style Architect",
+  "description": "An advanced tool to extract and define the visual DNA of any image, generating precise prompts for NotebookLM Infographics and Gemini image models.",
+  "requestFramePermissions": []
+}
