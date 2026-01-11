@@ -4,7 +4,7 @@ export interface VisualStyleDefinition {
   styleId: string;
   compatibility: string[];
   totalScore: number;
-  tags: string[]; // Added tags for categorization
+  tags: string[];
   overallDesignSettings: {
     tone: string;
   };
@@ -12,7 +12,7 @@ export interface VisualStyleDefinition {
     backgroundColor: string;
     textColor: string;
     accentColor: string;
-    secondaryColors: string[]; // Added to capture more than 3 colors
+    secondaryColors: string[];
   };
   imageStyle: {
     features: string;
@@ -41,7 +41,7 @@ export interface SavedStyle extends VisualStyleDefinition {
   originalImage: string;
   userEmail?: string;
   userName?: string;
-  isPublic?: boolean; // Track if shared to community
+  isPublic?: boolean;
 }
 
 export interface UserSession {
@@ -51,6 +51,9 @@ export interface UserSession {
   isLoggedIn: boolean;
   hasKey: boolean;
   isAdmin: boolean;
+  googleAccessToken?: string;
+  spreadsheetId?: string;
+  isSyncing?: boolean;
 }
 
 export interface AnalysisState {

@@ -114,7 +114,8 @@ const HomeDashboard: React.FC<HomeDashboardProps> = ({
   );
 };
 
-const StyleCard = ({ style, onSelect, isCommunity = false }: { style: any, onSelect: () => void, isCommunity?: boolean }) => (
+// Explicitly typed as React.FC to fix the 'key' prop TypeScript error
+const StyleCard: React.FC<{ style: any; onSelect: () => void; isCommunity?: boolean }> = ({ style, onSelect, isCommunity = false }) => (
   <div 
     className="group cursor-pointer"
     onClick={onSelect}

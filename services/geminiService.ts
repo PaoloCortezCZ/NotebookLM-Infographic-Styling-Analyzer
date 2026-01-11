@@ -6,7 +6,8 @@ import { VisualStyleDefinition } from "../types";
 const MODEL_NAME = 'gemini-3-pro-preview';
 
 export async function analyzeImageStyle(base64Image: string): Promise<VisualStyleDefinition> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  // Use process.env.API_KEY directly as required by guidelines
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const response = await ai.models.generateContent({
     model: MODEL_NAME,
@@ -25,9 +26,10 @@ Strict Architectural Requirements:
 1. STYLE ID: A unique identifier (e.g., STYLE #B-902).
 2. STYLE NAME: Evocative nomenclature.
 3. TONE: Professional descriptors for mood and authority.
-4. VISUAL IDENTITY: Provide a full palette. 
+4. VISUAL IDENTITY: Provide a clean, curated palette. 
    - Define primary Background, Text, and Accent hex codes. 
-   - Detect and include an array of at least 3-5 additional "Secondary Colors" (highlights, mid-tones, gradients, or supporting UI colors) that contribute to the aesthetic.
+   - Detect and include an array of "Secondary Colors". 
+   - ADAPTIVE LOGIC: For minimalist or low-color images, provide EXACTLY 2. For complex diagrams, multi-colored architectures, or vibrant illustrations, extract between 3 and 5 significant secondary colors that represent intentional design categories or accents. Avoid insignificant color noise (like anti-aliasing artifacts).
 5. IMAGE STYLE: 
    - "Features": Core visual elements.
    - "Texture": Surface qualities and tactile feel.
