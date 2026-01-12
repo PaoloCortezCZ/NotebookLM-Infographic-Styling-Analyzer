@@ -2,7 +2,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { AnalysisState, VisualStyleDefinition, SavedStyle, UserSession } from './types';
 import { analyzeImageStyle } from './services/geminiService';
-import { initializeUserSheet, appendStyleToSheet } from './services/googleService';
+import { initializeUserSheet, appendStyleToSheet, fetchStylesFromSheet } from './services/googleService';
 import { saveStyleLocal, getAllStylesLocal, deleteStyleLocal } from './services/dbService';
 import Header from './components/Header';
 import ImageUploader from './components/ImageUploader';
@@ -15,6 +15,7 @@ import AdminDashboard from './components/AdminDashboard';
 import HomeDashboard from './components/HomeDashboard';
 
 const ADMIN_EMAILS = ['kotyza@gmail.com', 'pavel.kotyza@camstreamer.com'];
+const FREE_PASS_EMAILS = ['kotyza@gmail.com', 'pavel.kotyza@camstreamer.com'];
 
 const compressImage = (base64Str: string, maxWidth = 1000, maxHeight = 1000): Promise<string> => {
   return new Promise((resolve) => {
@@ -48,6 +49,7 @@ const compressImage = (base64Str: string, maxWidth = 1000, maxHeight = 1000): Pr
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<'home' | 'gallery' | 'tutorial' | 'history' | 'admin'>('home');
   const [isDbReady, setIsDbReady] = useState(false);
+  const [isSyncingFromCloud, setIsSyncingFromCloud] = useState(false);
   
   const [session, setSession] = useState<UserSession>(() => {
     try {
@@ -70,40 +72,50 @@ const App: React.FC = () => {
   const userLibrary = useMemo(() => archive.filter(item => item.userEmail === session.email), [archive, session.email]);
   const publicLibrary = useMemo(() => archive.filter(item => item.isPublic), [archive]);
 
-  // Load Archive from IndexedDB on startup
   useEffect(() => {
     const loadArchive = async () => {
       try {
         const styles = await getAllStylesLocal();
         setArchive(styles.sort((a, b) => b.timestamp - a.timestamp));
-        setIsDbReady(true);
       } catch (e) {
-        console.error("Failed to load IndexedDB archive", e);
-        setIsDbReady(true); // Proceed anyway, just in-memory
+        console.error("IndexedDB error", e);
+      } finally {
+        setIsDbReady(true);
       }
     };
     loadArchive();
   }, []);
 
-  // Sync user info only to localStorage
   useEffect(() => {
     localStorage.setItem('style_architect_user', JSON.stringify(session));
   }, [session]);
 
-  // Google Sheet Initialization
   useEffect(() => {
+    // Attempt cloud sync only if logged in and we have a valid-looking token
     if (session.isLoggedIn && session.googleAccessToken && !session.spreadsheetId) {
-      const initCloud = async () => {
+      const syncCloud = async () => {
         try {
           const id = await initializeUserSheet(session.googleAccessToken!);
           setSession(prev => ({ ...prev, spreadsheetId: id }));
+
+          // Only sync cloud data if it's NOT a demo vault and we have no local data
+          if (id !== 'demo_vault_id' && archive.length === 0) {
+            setIsSyncingFromCloud(true);
+            const cloudStyles = await fetchStylesFromSheet(session.googleAccessToken!, id);
+            if (cloudStyles.length > 0) {
+              setArchive(cloudStyles.sort((a, b) => b.timestamp - a.timestamp));
+              for (const s of cloudStyles) await saveStyleLocal(s);
+            }
+          }
         } catch (e) {
-          console.error("Cloud init failed", e);
+          console.warn("Cloud infrastructure handshake failed. Reverting to local DNA storage.", e);
+        } finally {
+          setIsSyncingFromCloud(false);
         }
       };
-      initCloud();
+      syncCloud();
     }
-  }, [session.isLoggedIn, session.googleAccessToken, session.spreadsheetId]);
+  }, [session.isLoggedIn, session.googleAccessToken, session.spreadsheetId, archive.length === 0]);
 
   const handleImageUpload = useCallback(async (file: File) => {
     const reader = new FileReader();
@@ -134,18 +146,16 @@ const App: React.FC = () => {
         isPublic: sharePublicly
       };
 
-      // 1. Update UI state
       setArchive(prev => [newSaved, ...prev]);
 
-      // 2. Persist to IndexedDB (Support large files)
       try {
         await saveStyleLocal(newSaved);
       } catch (e) {
-        console.error("IndexedDB save failed", e);
+        console.error("Local save error", e);
       }
 
-      // 3. Sync to Google Sheets
-      if (session.googleAccessToken && session.spreadsheetId) {
+      // Sync to cloud if vault is active and not a demo
+      if (session.googleAccessToken && session.spreadsheetId && session.spreadsheetId !== 'demo_vault_id') {
         setSession(prev => ({ ...prev, isSyncing: true }));
         try {
           await appendStyleToSheet(session.googleAccessToken, session.spreadsheetId, newSaved);
@@ -161,36 +171,18 @@ const App: React.FC = () => {
   const handleImportStyles = async (imported: SavedStyle[]) => {
     const existingIds = new Set(archive.map(p => p.id));
     const newUnique = imported.filter(i => !existingIds.has(i.id));
-    
     setArchive(prev => [...newUnique, ...prev]);
-    
-    // Asynchronously save imports to IndexedDB to keep UI responsive
-    for (const style of newUnique) {
-      try {
-        await saveStyleLocal(style);
-      } catch (e) {
-        console.error("Failed to persist imported style", e);
-      }
-    }
+    for (const style of newUnique) await saveStyleLocal(style);
   };
 
   const deleteFromHistory = async (id: string) => {
     setArchive(prev => prev.filter(item => item.id !== id));
-    try {
-      await deleteStyleLocal(id);
-    } catch (e) {
-      console.error("Failed to delete from IndexedDB", e);
-    }
+    await deleteStyleLocal(id);
     if ((state.result as SavedStyle)?.id === id) reset();
   };
 
   const selectStyleFromGallery = useCallback((style: VisualStyleDefinition | SavedStyle) => {
-    setState({ 
-      isLoading: false, 
-      error: null, 
-      result: style, 
-      imagePreview: (style as any).originalImage || (style as any).previewImage || null 
-    });
+    setState({ isLoading: false, error: null, result: style, imagePreview: (style as any).originalImage || (style as any).previewImage || null });
     setCurrentView('home');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
@@ -201,8 +193,18 @@ const App: React.FC = () => {
   };
 
   const handleAuthComplete = (name: string, email: string, avatar: string, token: string) => {
-    const isAdmin = ADMIN_EMAILS.includes(email.toLowerCase());
-    setSession({ username: name, email, avatar, isLoggedIn: true, hasKey: isAdmin, isAdmin, googleAccessToken: token });
+    const isAdmin = ADMIN_EMAILS.some(adminEmail => adminEmail.toLowerCase() === email.toLowerCase());
+    const isFreePass = FREE_PASS_EMAILS.some(freeEmail => freeEmail.toLowerCase() === email.toLowerCase());
+    
+    setSession({ 
+      username: name, 
+      email, 
+      avatar, 
+      isLoggedIn: true, 
+      hasKey: isFreePass, 
+      isAdmin, 
+      googleAccessToken: token 
+    });
   };
 
   const handleKeyConnected = () => setSession(prev => ({ ...prev, hasKey: true }));
@@ -221,10 +223,12 @@ const App: React.FC = () => {
       <Header 
         activeView={currentView}
         username={session.username}
+        email={session.email}
         avatar={session.avatar}
         isAdmin={session.isAdmin}
-        isSyncing={session.isSyncing}
-        hasCloud={!!session.spreadsheetId}
+        isSyncing={session.isSyncing || isSyncingFromCloud}
+        hasCloud={!!session.spreadsheetId && session.spreadsheetId !== 'demo_vault_id'}
+        spreadsheetId={session.spreadsheetId}
         onViewHome={() => setCurrentView('home')} 
         onViewInspiration={() => setCurrentView('gallery')} 
         onViewTutorial={() => setCurrentView('tutorial')}
@@ -233,9 +237,9 @@ const App: React.FC = () => {
         onLogout={handleLogout}
       />
       
-      {!isDbReady && (
-        <div className="bg-slate-900 text-white text-[9px] font-black uppercase tracking-[0.2em] py-1 text-center sticky top-16 z-40">
-          Initializing Architectural Local Vault...
+      {isSyncingFromCloud && (
+        <div className="bg-[#0F172A] text-white text-[9px] font-black uppercase tracking-[0.2em] py-1 text-center sticky top-16 z-40">
+          Syncing G-Vault Infrastructure...
         </div>
       )}
 
@@ -256,7 +260,7 @@ const App: React.FC = () => {
                   <div className="max-w-3xl space-y-6">
                     <h2 className="text-6xl sm:text-8xl font-serif-bold tracking-tighter text-slate-900 leading-[0.9]">Architect visual DNA.</h2>
                     <p className="text-slate-500 text-xl sm:text-2xl font-medium max-w-xl mx-auto leading-relaxed">
-                      Sync to <span className="text-emerald-500 font-black">Google Sheets</span> & store large libraries in <span className="text-indigo-500 font-black">IndexedDB</span>.
+                      Synced with <span className="text-emerald-500 font-black">Google Drive</span> & stored in your private <span className="text-indigo-500 font-black">G-Vault</span>.
                     </p>
                   </div>
                   <ImageUploader onUpload={handleImageUpload} />
